@@ -34,7 +34,7 @@ app.use('/webhook/telegram', limiter);
 async function sendLanguageMenu(chatId) {
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
     chat_id: chatId,
-    text: "🎉 Bem-vindo ao TutorIA! Qual idioma você quer destravar hoje?",
+    text: "🎉 Bem-vindo ao prose.IA! Qual idioma você quer destravar hoje?",
     reply_markup: {
       inline_keyboard: [
         [
