@@ -10,7 +10,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 export class AIService {
   
   // ==========================================
-  // 1. CAPTAR E TRANSCREVER (Ouvido)
+  // 1. TRANSCREVER (Whisper V3)
   // ==========================================
   static async transcribeAudio(audioBuffer) {
     const tempFile = `./temp_${Date.now()}.ogg`;
@@ -28,86 +28,88 @@ export class AIService {
   }
 
   // ==========================================
-  // 2. AVALIAR, CORRIGIR, SUGERIR E RESPONDER (Cérebro)
+  // 2. PROCESSAR PEDAGOGIA (Cérebro Multidimensional)
   // ==========================================
-  static async processPedagogy(userText, language, level, isRoleplay = false) {
+  static async processPedagogy(userText, language, level, scenarioKey = null) {
     const personas = {
-      english: "Inglês (EUA): Guia pragmático, entusiasta, focado em comunicação real.",
-      spanish: "Espanhol (Latino): Companheiro caloroso, expressivo, focado em cultura.",
-      french: "Francês (França): Intelectual, polido, focado na etiqueta e fluidez."
+      english: "Inglês (EUA): Tutora americana moderna, usa phrasal verbs e contrações naturais.",
+      spanish: "Espanhol (Latam): Tutor caloroso, expressivo e amigável.",
+      french: "Francês (França): Tutor polido, focado na etiqueta e na liaison sonora."
     };
 
-    const roleplayInstruction = isRoleplay 
-      ? "MODO ATUAL: ROLEPLAY. Assuma o papel de um NPC. Faça perguntas no contexto." 
-      : "MODO ATUAL: CONVERSA LIVRE E MICROLEARNING.";
+    // Mapeamento de Cenários (Roleplays)
+    const scenarios = {
+      rp_airport: "Oficial de imigração rigoroso no aeroporto.",
+      rp_cafe: "Atendente de uma cafeteria movimentada.",
+      rp_job: "Recrutador de RH em uma entrevista de emprego.",
+      rp_school: "Professor(a) corrigindo uma tarefa de casa.",
+      rp_university: "Colega veterano ajudando no campus universitário.",
+      rp_cinema: "Funcionário da bilheteria do cinema.",
+      rp_park: "Pessoa passeando com cachorro que puxa conversa no parque.",
+      rp_travel: "Recepcionista de um hotel de luxo ou guia turístico em um ponto histórico.",
+      rp_church: "Membro acolhedor de uma comunidade religiosa após o culto/missa.",
+      rp_meeting: "Líder de uma reunião corporativa via Zoom discutindo metas trimestrais."
+    };
+
+    const currentScenario = scenarioKey ? scenarios[scenarioKey] : "Tutor em uma conversa casual de microlearning.";
 
     const systemPrompt = `
-      Você é o Coordenador Pedagógico e Tutor do prose.IA.
-      PÚBLICO: Brasileiros aprendendo ${language}. Nível: ${level}.
-      PERSONA: ${personas[language] || personas.english}
-      ${roleplayInstruction}
+      Você é o motor de IA do prose.IA. 
+      ALUNO: Brasileiro, Nível ${level}, aprendendo ${language}.
+      PERSONALIDADE: ${personas[language] || personas.english}
+      CENÁRIO ATUAL: ${currentScenario}
 
-      Siga rigorosamente a metodologia TBLT e o Feedback Sanduíche.
-      VOCÊ DEVE RESPONDER OBRIGATORIAMENTE NESTE FORMATO JSON:
+      METODOLOGIA:
+      - TBLT: Foque em fazer o aluno resolver a situação de comunicação.
+      - Explain My Answer: Se houver erro, explique o "porquê" de forma simples em PT-BR.
+      
+      RETORNE APENAS JSON:
       {
-        "analysis": "Avalie brevemente se o aluno usou bem o vocabulário ou se cometeu vícios brasileiros (Ex: 'A pronúncia do TH foi trocada por F'). Apenas em PT-BR.",
-        "correction": "O Feedback Sanduíche detalhado (Elogio + Correção). Apenas em PT-BR. Se não houver erro, elogie.",
-        "suggestion": "Uma dica rápida e prática de estudo ou vocabulário extra. Apenas em PT-BR.",
-        "spoken_response": "A resposta natural da conversa como Tutor/NPC. 100% em ${language}. NUNCA use português aqui."
+        "evaluation": {
+          "score": <0-100>,
+          "praise": "<Elogio curto em PT-BR>"
+        },
+        "deep_correction": "<Explicação pedagógica do erro ou dica nativa em PT-BR.>",
+        "spoken_response": "<Sua fala como NPC/Tutor. 100% em ${language}. Curta e natural.>"
       }
     `;
 
     try {
       const completion = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userText }
-        ],
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userText }],
         response_format: { type: "json_object" }
       });
-
       return JSON.parse(completion.choices[0].message.content);
     } catch (error) {
-      console.error("❌ Erro na IA Pedagógica:", error);
-      return { 
-        analysis: "Erro de processamento.",
-        correction: "Tivemos um pequeno lapso de conexão.", 
-        suggestion: "Tente enviar a mensagem novamente.",
-        spoken_response: "Can you repeat, please?" 
-      };
+      console.error("Erro IA:", error);
+      return { evaluation: { score: 0, praise: "Ops!" }, deep_correction: "Erro de conexão.", spoken_response: "Can you repeat?" };
     }
   }
 
   // ==========================================
-  // 3. FALAR (Boca Bilíngue com Sotaques Nativos)
+  // 3. GERAR VOZ (Sotaques Nativos)
   // ==========================================
   static async generateBilingualVoice(targetText, language, ptText) {
     try {
       const langCodes = { english: 'en-US', spanish: 'es-MX', french: 'fr-FR', portuguese: 'pt-BR' };
-      const targetCode = langCodes[language] || 'en-US';
+      const targetCode = langCodes[language] || 'pt-BR';
       let audioBuffers = [];
 
-      // A. Áudio do Idioma Alvo (A Conversa)
-      if (targetText && targetText.trim() !== "") {
-        const targetResults = await googleTTS.getAllAudioBase64(targetText, {
-          lang: targetCode, slow: false, host: 'https://translate.google.com', splitPunct: ',.?'
-        });
-        audioBuffers.push(...targetResults.map(res => Buffer.from(res.base64, 'base64')));
+      if (targetText) {
+        const res = await googleTTS.getAllAudioBase64(targetText, { lang: targetCode, host: 'https://translate.google.com' });
+        audioBuffers.push(...res.map(r => Buffer.from(r.base64, 'base64')));
       }
 
-      // B. Áudio em Português (O Feedback)
-      if (ptText && ptText.trim() !== "") {
-        const ptResults = await googleTTS.getAllAudioBase64(ptText, {
-          lang: 'pt-BR', slow: false, host: 'https://translate.google.com', splitPunct: ',.?'
-        });
-        audioBuffers.push(...ptResults.map(res => Buffer.from(res.base64, 'base64')));
+      if (ptText) {
+        const res = await googleTTS.getAllAudioBase64(ptText, { lang: 'pt-BR', host: 'https://translate.google.com' });
+        audioBuffers.push(...res.map(r => Buffer.from(r.base64, 'base64')));
       }
 
       return audioBuffers.length > 0 ? Buffer.concat(audioBuffers) : null;
     } catch (error) {
-      console.error("❌ Erro no TTS Bilíngue:", error.message);
-      throw error;
+      console.error("Erro TTS:", error);
+      return null;
     }
   }
 }

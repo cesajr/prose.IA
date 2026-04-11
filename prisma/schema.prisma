@@ -7,30 +7,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Tabela principal do Aluno
 model User {
-  id               BigInt    @id // ID do Telegram (sempre único)
-  name             String?
-  targetLanguage   String    @default("english") // english, spanish, french
-  cefrLevel        String    @default("A1")      // A1, A2, B1, B2, C1, C2
-  xp               Int       @default(0)
-  streak           Int       @default(0)
-  lastActivity     DateTime  @default(now())
-  
-  // Relacionamento com erros para o SRS (Repetição Espaçada)
-  mistakes         Mistake[]
-  
-  createdAt        DateTime  @default(now())
+  id                 BigInt   @id
+  name               String
+  targetLanguage     String   @default("english")
+  cefrLevel          String   @default("A1")
+  activeRoleplay     String?  // Ex: "rp_airport" ou null
+  activeRoleplayStep Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  interactions Interaction[]
 }
 
-// Tabela para mapear erros e aplicar o SRS
-model Mistake {
-  id          String   @id @default(uuid())
-  userId      BigInt
+model Interaction {
+  id          String   @id @default(cuid())
   user        User     @relation(fields: [userId], references: [id])
-  category    String   // Ex: "pronunciation", "grammar", "vocabulary"
-  content     String   // O erro cometido (ex: "I work-i")
-  correction  String   // A forma correta
-  reviewCount Int      @default(0)
-  nextReview  DateTime @default(now())
+  userId      BigInt
+  userMessage String
+  botResponse Json     // Armazena o JSON completo da resposta da IA
+  score       Int
+  createdAt   DateTime @default(now())
 }
