@@ -5,136 +5,170 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import FormData from 'form-data';
-import { AIService } from './aiService.js'; // Nosso cérebro isolado
+import { AIService } from './aiService.js'; 
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
+const prisma = new PrismaClient();
 const app = express();
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
-// Adicione esta linha para o Express confiar no túnel do Ngrok
 app.set('trust proxy', 1);
 
-// ==========================================
-// 1. APPSEC: BLINDAGEM DO SERVIDOR HTTP
-// ==========================================
+// --- MIDDLEWARES ---
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: '5mb' })); // Limite maior para suportar payloads com links de áudio
+app.use(express.json({ limit: '5mb' }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 150,
   message: 'Rate limit excedido.'
 });
-app.use('/webhook', limiter);
+app.use('/webhook/telegram', limiter);
 
-// ==========================================
-// 2. ORQUESTRADOR ASSÍNCRONO (EVENT LOOP SAFE)
-// ==========================================
-// Esta função roda em background. O Node não bloqueia a thread principal.
-async function processTelegramMessage(message) {
+// --- FUNÇÕES AUXILIARES (ONBOARDING) ---
+
+async function sendLanguageMenu(chatId) {
+  await axios.post(`${TELEGRAM_API}/sendMessage`, {
+    chat_id: chatId,
+    text: "🎉 Bem-vindo ao TutorIA! Qual idioma você quer destravar hoje?",
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "🇺🇸 Inglês", callback_data: "lang_english" },
+          { text: "🇪🇸 Espanhol", callback_data: "lang_spanish" },
+          { text: "🇫🇷 Francês", callback_data: "lang_french" }
+        ]
+      ]
+    }
+  });
+}
+
+async function answerCallback(callbackId) {
+  await axios.post(`${TELEGRAM_API}/answerCallbackQuery`, { callback_query_id: callbackId });
+}
+
+// --- PROCESSAMENTO EM BACKGROUND ---
+
+async function processTelegramMessage(message, userData) {
   const chatId = message.chat.id;
 
   try {
-    // A. Notifica o usuário que a IA está "digitando/gravando"
     await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: 'record_voice' });
 
     let userText = '';
 
-    // B. Roteamento: É Texto ou Áudio?
     if (message.text) {
       userText = message.text;
     } 
     else if (message.voice) {
-      // 1. Pega o caminho do arquivo no servidor do Telegram
       const fileRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${message.voice.file_id}`);
       const filePath = fileRes.data.result.file_path;
       
-      // 2. Baixa o arquivo binário (ArrayBuffer)
       const audioRes = await axios.get(`https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`, {
         responseType: 'arraybuffer'
       });
       
-      // 3. Envia para o Whisper transcrever (Transforma em Buffer nativo do Node)
       const audioBuffer = Buffer.from(audioRes.data);
-      // Nota: o arquivo gerado pelo Telegram é um .ogg
       audioBuffer.name = 'audio.ogg'; 
 
       userText = await AIService.transcribeAudio(audioBuffer);
-      console.log(`🎙️ Transcrição do Whisper: "${userText}"`);
-    } else {
-      return; // Ignora stickers, imagens, etc.
+      console.log(`🎙️ Transcrição (${userData.targetLanguage}): "${userText}"`);
     }
 
-    // C. Cérebro: GPT-4o gera a resposta pedagógica e a correção
-    const aiResponseText = await AIService.getChatResponse(userText);
+    if (!userText) return;
 
-    // D. Envia a correção em TEXTO para o aluno ler
+    // Cérebro: Injetando IDIOMA e NÍVEL do banco de dados
+    const aiResponseText = await AIService.getChatResponse(userText, userData.targetLanguage, userData.cefrLevel);
+
+    // Envia texto
     await axios.post(`${TELEGRAM_API}/sendMessage`, { 
       chat_id: chatId, 
-      text: aiResponseText 
+      text: aiResponseText,
+      parse_mode: 'Markdown'
     });
 
-    // E. TTS: Gera o áudio da IA falando fluentemente
-    const aiAudioBuffer = await AIService.textToSpeech(aiResponseText);
+    // TTS e Envio de Voz (Opcional, se sua conta Groq/OpenAI suportar)
+    try {
+        const aiAudioBuffer = await AIService.textToSpeech(aiResponseText);
+        const form = new FormData();
+        form.append('chat_id', chatId);
+        form.append('voice', aiAudioBuffer, { filename: 'tutor_response.ogg', contentType: 'audio/ogg' });
 
-    // F. Prepara o envio do áudio (Multipart Form-Data)
-    const form = new FormData();
-    form.append('chat_id', chatId);
-    form.append('voice', aiAudioBuffer, { filename: 'tutor_response.ogg', contentType: 'audio/ogg' });
-
-    // G. Envia o áudio de volta para o Telegram
-    await axios.post(`${TELEGRAM_API}/sendVoice`, form, {
-      headers: form.getHeaders()
-    });
+        await axios.post(`${TELEGRAM_API}/sendVoice`, form, {
+            headers: form.getHeaders()
+        });
+    } catch (ttsErr) {
+        console.warn("⚠️ TTS não disponível ou falhou.");
+    }
 
   } catch (error) {
-    console.error('❌ Erro no processamento em background:', error.message);
+    console.error('❌ Erro no processamento:', error.message);
     await axios.post(`${TELEGRAM_API}/sendMessage`, { 
       chat_id: chatId, 
-      text: "Ops! Tive um problema técnico ao processar sua mensagem. Tente novamente." 
-    }).catch(() => {}); // Catch silencioso para não derrubar o app se o Telegram cair
+      text: "Ops! Tive um problema técnico. Tente novamente." 
+    }).catch(() => {});
   }
 }
 
-// ==========================================
-// ROTA DE HEALTH CHECK (Página Inicial)
-// ==========================================
-app.get('/', (req, res) => {
-  res.status(200).send('🟢 API DestravIA está online e aguardando webhooks.');
-});
+// --- ROTAS ---
 
-// ==========================================
-// 3. ROTA DO WEBHOOK (TELEGRAM)
-// ==========================================
-app.post('/webhook/telegram', (req, res) => {
-  // 1. Validação de Assinatura (Hard Constraint)
+app.post('/webhook/telegram', async (req, res) => {
   const secretToken = req.headers['x-telegram-bot-api-secret-token'];
-  if (secretToken !== process.env.TELEGRAM_SECRET_TOKEN) {
-    console.warn('⚠️ Tentativa de acesso negada (Token Inválido).');
-    return res.status(403).send('Acesso Negado');
+  if (secretToken !== process.env.TELEGRAM_SECRET_TOKEN) return res.status(403).send('Acesso Negado');
+
+  const { message, callback_query } = req.body;
+
+  // A. Tratamento de Cliques nos Botões
+  if (callback_query) {
+    const chatId = callback_query.message.chat.id;
+    const chosenLang = callback_query.data.replace('lang_', '');
+
+    await prisma.user.update({
+      where: { id: BigInt(chatId) },
+      data: { targetLanguage: chosenLang }
+    });
+
+    await answerCallback(callback_query.id);
+    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+      chat_id: chatId,
+      text: `Perfeito! Definido para **${chosenLang}**. Vamos começar? Pode falar ou escrever!`,
+      parse_mode: 'Markdown'
+    });
+    return res.sendStatus(200);
   }
 
-  const message = req.body.message;
-  
+  // B. Tratamento de Mensagens
   if (message) {
-    console.log(`📩 Recebido de ${message.from.first_name}`);
-    
-    // 2. Dispara o processamento em background (Fire-and-forget)
-    // NÃO usamos 'await' aqui. Se usarmos, o Telegram fica aguardando e dá timeout.
-    processTelegramMessage(message);
+    const chatId = message.chat.id;
+
+    // MEMÓRIA: Busca ou cria usuário
+    let user = await prisma.user.findUnique({ where: { id: BigInt(chatId) } });
+
+    if (!user) {
+      user = await prisma.user.create({
+        data: { id: BigInt(chatId), name: message.from.first_name || "Estudante" }
+      });
+      await sendLanguageMenu(chatId);
+      return res.sendStatus(200);
+    }
+
+    if (message.text === '/start') {
+      await sendLanguageMenu(chatId);
+      return res.sendStatus(200);
+    }
+
+    // Dispara processamento com os dados do usuário vindos do banco
+    processTelegramMessage(message, user);
   }
 
-  // 3. Responde imediatamente ao Telegram (Libera a conexão HTTP)
   res.sendStatus(200);
 });
 
-// ==========================================
-// 4. INICIALIZAÇÃO
-// ==========================================
+app.get('/', (req, res) => res.send('🟢 DestravIA Online'));
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 DestravIA Omnichannel rodando blindado na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Servidor na porta ${PORT}`));
