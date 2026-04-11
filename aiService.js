@@ -9,11 +9,9 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export class AIService {
   
-  // --- OUVIDO: Whisper transcreve o áudio ---
   static async transcribeAudio(audioBuffer) {
     const tempFile = `./temp_${Date.now()}.ogg`;
     fs.writeFileSync(tempFile, audioBuffer);
-    
     try {
       const transcription = await groq.audio.transcriptions.create({
         file: fs.createReadStream(tempFile),
@@ -25,35 +23,26 @@ export class AIService {
     }
   }
 
-  // --- CÉREBRO: Metodologia prose.IA (JSON Output) ---
   static async getChatResponse(userText, language, level, isRoleplay = false) {
     const personas = {
       english: "Inglês (EUA/UK): Guia pragmático, entusiasta, focado em negócios, cultura pop e eficiência.",
       spanish: "Espanhol (ESP/MEX): Companheiro caloroso, expressivo, focado em relações sociais, comida e cultura vibrante.",
-      french: "Francês (FRA): Intelectual, polido, focado na etiqueta (politesse) e na elegância do idioma."
+      french: "Francês (FRA): Intelectual, polido, focado na etiqueta (politesse) e a elegância do idioma."
     };
 
     const roleplayInstruction = isRoleplay 
-      ? "ATIVIDADE ATUAL: MODO ROLEPLAY. O usuário quer treinar uma situação real (ex: imigração, restaurante). Assuma o papel do NPC (atendente, policial, garçom). Faça perguntas diretas e espere a resposta." 
-      : "ATIVIDADE ATUAL: CONVERSA LIVRE E MICROLEARNING.";
+      ? "ATIVIDADE: ROLEPLAY. O usuário quer treinar uma situação real. Assuma o papel do NPC." 
+      : "ATIVIDADE: CONVERSA LIVRE E MICROLEARNING.";
 
     const systemPrompt = `
-      Você é o Coordenador Pedagógico do prose.IA, um Sistema Multilíngue de Ensino Imersivo.
-      
+      Você é o Coordenador Pedagógico do prose.IA.
       PÚBLICO: Brasileiros aprendendo ${language}. Nível: ${level}.
       PERSONA: ${personas[language] || personas.english}
       ${roleplayInstruction}
 
-      PILARES METODOLÓGICOS:
-      1. TBLT (Task-Based Language Teaching): Foco na comunicação e resolução de problemas.
-      2. Filtro Afetivo Baixo: Seja extremamente empático. Ninguém gosta de ser julgado.
-      3. Feedback Sanduíche: Elogio + Correção + Pergunta para continuar a fluidez.
-      4. Foco em Pronúncia: O aluno usa áudio. Se ele escreveu 'worki' em vez de 'work', corrija a palatalização típica de brasileiros.
-
-      REGRA DE OURO (FORMATO DE SAÍDA):
-      Você DEVE, obrigatoriamente, responder APENAS em formato JSON válido, contendo duas chaves:
-      "correction": "O Feedback Sanduíche em texto (Use português se o nível for A1/A2, senão no idioma alvo). Deixe vazio '' se não houver erros.",
-      "spoken_response": "A resposta natural da conversa no idioma alvo. Curta, fluida, como uma mensagem de voz de WhatsApp (sem emojis, sem hashtags, pronta para ser lida por um TTS)."
+      REGRA DE OURO (SEPARAÇÃO ESTRITA DE IDIOMAS NO JSON):
+      "correction": "Seu Feedback Sanduíche explicando o erro de gramática/pronúncia. OBRIGATORIAMENTE 100% EM PORTUGUÊS (PT-BR). Se não houver erros, deixe vazio ''.",
+      "spoken_response": "A continuação natural da conversa. OBRIGATORIAMENTE 100% NO IDIOMA ALVO (${language}). NUNCA coloque português nesta chave."
     `;
 
     try {
@@ -63,40 +52,43 @@ export class AIService {
           { role: "system", content: systemPrompt },
           { role: "user", content: userText }
         ],
-        response_format: { type: "json_object" } // Força a saída estruturada
+        response_format: { type: "json_object" }
       });
 
-      // Extrai o JSON gerado
-      const rawContent = completion.choices[0].message.content;
-      return JSON.parse(rawContent);
-
+      return JSON.parse(completion.choices[0].message.content);
     } catch (error) {
-      console.error("Erro na geração da resposta:", error);
-      return { 
-        correction: "⚠️ Tive um pequeno lapso de memória.", 
-        spoken_response: "Sorry, can you say that again?" 
-      };
+      console.error("Erro na Llama:", error);
+      return { correction: "Tive um problema na conexão.", spoken_response: "Can you repeat, please?" };
     }
   }
 
-  // --- BOCA: Google TTS (100% Gratuito) ---
-  static async textToSpeech(text, language) {
-    if (!text || text.trim() === "") return null;
-
+  // --- O SEGREDO: CORDAS VOCAIS BILÍNGUES ---
+  static async generateBilingualTTS(targetText, language, ptText) {
     try {
       const langCodes = { english: 'en', spanish: 'es', french: 'fr' };
-      const code = langCodes[language] || 'en';
+      const targetCode = langCodes[language] || 'en';
+      let audioBuffers = [];
 
-      const results = await googleTTS.getAllAudioBase64(text, {
-        lang: code,
-        slow: false,
-        host: 'https://translate.google.com',
-        splitPunct: ',.?',
-      });
+      // 1. Gera a fala no idioma alvo (Sotaque Gringo Perfeito)
+      if (targetText && targetText.trim() !== "") {
+        const targetResults = await googleTTS.getAllAudioBase64(targetText, {
+          lang: targetCode, slow: false, host: 'https://translate.google.com', splitPunct: ',.?'
+        });
+        audioBuffers.push(...targetResults.map(res => Buffer.from(res.base64, 'base64')));
+      }
 
-      return Buffer.concat(results.map((res) => Buffer.from(res.base64, 'base64')));
+      // 2. Gera a explicação em Português (Sotaque BR Perfeito)
+      if (ptText && ptText.trim() !== "") {
+        const ptResults = await googleTTS.getAllAudioBase64(ptText, {
+          lang: 'pt', slow: false, host: 'https://translate.google.com', splitPunct: ',.?'
+        });
+        audioBuffers.push(...ptResults.map(res => Buffer.from(res.base64, 'base64')));
+      }
+
+      // Junta os dois MP3 em um único arquivo de áudio perfeitamente fluido!
+      return Buffer.concat(audioBuffers);
     } catch (error) {
-      console.error("❌ Erro no Google TTS:", error.message);
+      console.error("❌ Erro no TTS Bilíngue:", error.message);
       throw error;
     }
   }
