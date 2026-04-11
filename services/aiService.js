@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk';
-import * as googleTTS from 'google-tts-api';
+import { getAllAudioBase64 } from 'google-tts-api';
 import dotenv from 'dotenv';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
@@ -7,25 +7,40 @@ import { path as ffprobePath } from '@ffprobe-installer/ffprobe';
 import NodeCache from 'node-cache';
 import { jsonrepair } from 'jsonrepair';
 import { withTempFile } from '../utils/fileHelper.js';
-import { Readable } from 'stream';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
-// Configuração do FFmpeg
 ffmpeg.setFfmpegPath(ffmpegStatic);
 ffmpeg.setFfprobePath(ffprobePath);
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-// Cache de TTS (24 horas)
 const ttsCache = new NodeCache({ stdTTL: 86400 });
 
+let scenariosData = {};
+try {
+  const scenariosPath = path.join(process.cwd(), 'scenarios.json');
+  import('fs').then(fsSync => {
+      if(fsSync.existsSync(scenariosPath)) {
+          const data = fsSync.readFileSync(scenariosPath, 'utf-8');
+          scenariosData = JSON.parse(data);
+          console.log('✅ Roteiros carregados com sucesso.');
+      }
+  });
+} catch (error) {
+  console.warn('⚠️ Arquivo scenarios.json não encontrado. Usando descrições padrão.');
+}
+
 export class AIService {
-  /**
-   * 1. Transcrição de áudio com Whisper Large V3
-   *    - Converte OGG (Telegram) para WAV 16kHz mono
-   *    - Usa gerenciamento seguro de arquivos temporários
-   */
+  
+  // ==========================================
+  // 1. TRANSCRIÇÃO DE ÁUDIO
+  // ==========================================
   static async transcribeAudio(oggBuffer) {
     return withTempFile(oggBuffer, 'ogg', (inputPath) => {
       return new Promise((resolve, reject) => {
@@ -37,16 +52,15 @@ export class AIService {
           .audioChannels(1)
           .on('end', async () => {
             try {
+              const fsSync = await import('fs');
               const transcription = await groq.audio.transcriptions.create({
-                file: await import('fs').then(fs => fs.createReadStream(outputPath)),
+                file: fsSync.createReadStream(outputPath),
                 model: 'whisper-large-v3',
               });
               resolve(transcription.text);
             } catch (err) {
               reject(err);
             } finally {
-              // Limpeza do WAV gerado
-              const fs = await import('fs/promises');
               try { await fs.unlink(outputPath); } catch (_) {}
             }
           })
@@ -56,55 +70,52 @@ export class AIService {
     });
   }
 
-  /**
-   * 2. Processamento Pedagógico com Llama 3.3 70B
-   *    - Inclui prompt robusto, few-shot e reparo de JSON
-   */
+  // ==========================================
+  // 2. MOTOR PEDAGÓGICO
+  // ==========================================
   static async processPedagogy(userText, language, level, scenarioKey = null) {
     const personas = {
-      english: "Inglês (EUA): Tutora americana moderna, usa phrasal verbs e contrações naturais.",
+      english: "Inglês (EUA): Tutora americana moderna, usa phrasal verbs e contrações.",
       spanish: "Espanhol (Latam): Tutor caloroso, expressivo e amigável.",
-      french: "Francês (França): Tutor polido, focado na etiqueta e na liaison sonora."
+      french: "Francês (França): Tutor polido, focado na etiqueta e liaison sonora.",
+      portuguese: "Português (Brasil): Tutora nativa, paciente e detalhista na gramática."
     };
 
-    const scenarios = {
+    const scenariosFallback = {
       rp_airport: "Oficial de imigração rigoroso no aeroporto.",
       rp_cafe: "Atendente de uma cafeteria movimentada.",
       rp_job: "Recrutador de RH em uma entrevista de emprego.",
-      rp_school: "Professor(a) corrigindo uma tarefa de casa.",
-      rp_university: "Colega veterano ajudando no campus universitário.",
-      rp_cinema: "Funcionário da bilheteria do cinema.",
-      rp_park: "Pessoa passeando com cachorro que puxa conversa no parque.",
-      rp_travel: "Recepcionista de um hotel de luxo ou guia turístico em um ponto histórico.",
-      rp_church: "Membro acolhedor de uma comunidade religiosa após o culto/missa.",
-      rp_meeting: "Líder de uma reunião corporativa via Zoom discutindo metas trimestrais."
+      rp_school: "Professor(a) corrigindo uma tarefa de casa."
     };
 
-    const currentScenario = scenarioKey ? scenarios[scenarioKey] : "Tutor em uma conversa casual de microlearning.";
+    let currentScenarioDescription = "Conversa casual de microlearning.";
+    if (scenarioKey && scenariosData[scenarioKey]) {
+      currentScenarioDescription = `${scenariosData[scenarioKey].title}: ${scenariosData[scenarioKey].description}`;
+    } else if (scenarioKey) {
+      currentScenarioDescription = scenariosFallback[scenarioKey] || currentScenarioDescription;
+    }
 
     const systemPrompt = `
-      Você é a **Professora Clara**, uma tutora brasileira de ${language} do prose.IA.
+      Você é a **Professora Clara**, tutora implacável (porém gentil) de ${language} do prose.IA.
       ALUNO: Brasileiro, Nível ${level}.
-      CENÁRIO: ${currentScenario}
-
+      CENÁRIO: ${currentScenarioDescription}
       PERSONALIDADE: ${personas[language] || personas.english}
 
-      REGRAS DE OURO:
-      1. Se o aluno disser algo genérico como "oi", "tudo bem", você DEVE responder com um cumprimento em ${language} e depois sugerir um tópico em PT-BR.
-      2. SEMPRE retorne JSON válido. Não use vírgulas extras ou quebras de linha incorretas.
-      3. O campo "spoken_response" deve estar 100% no idioma ${language}.
-      
-      EXEMPLO DE SAÍDA:
+      🎯 FOCO EM CORREÇÃO:
+      Procure ativamente por erros na fala/escrita do aluno (Pronúncia, Gramática ou Traduções literais).
+
+      ⚠️ REGRAS DE ISOLAMENTO POLIGLOTA (CRÍTICO):
+      1. "spoken_response": 100% em ${language}. NENHUMA palavra em português.
+      2. "deep_correction": Em Português (PT-BR). MAS, TODA VEZ que você escrever uma palavra no idioma ${language} aqui dentro, VOCÊ DEVE envolvê-la com um único asterisco (*). O nosso sistema usará esse asterisco para mudar a voz da professora para sotaque nativo.
+
+      RETORNE OBRIGATORIAMENTE JSON. EXEMPLO:
       {
-        "evaluation": {
-          "score": 90,
-          "praise": "Pronúncia excelente, muito natural!"
-        },
-        "deep_correction": "Cuidado com a preposição 'in' vs 'on'. Lembre-se: 'on the bus'.",
-        "spoken_response": "That sounds great! So, what do you like to do in your free time?"
+        "evaluation": { "score": 65, "praise": "Boa tentativa!" },
+        "deep_correction": "Cuidado com a pronúncia! Parece que você disse *tree* em vez de *three*. O som do *TH* é muito importante.",
+        "spoken_response": "I see! Being 20 is a great age. Do you work or study?"
       }
 
-      Agora, processe a fala do aluno: "${userText}"
+      Mensagem do aluno: "${userText}"
     `;
 
     try {
@@ -114,76 +125,118 @@ export class AIService {
           { role: "system", content: systemPrompt },
           { role: "user", content: userText }
         ],
-        temperature: 0.7,
+        temperature: 0.2,
         response_format: { type: "json_object" }
       });
 
       let rawJson = completion.choices[0].message.content;
-      
+      let parsed;
       try {
-        return JSON.parse(rawJson);
-      } catch (parseError) {
-        console.warn("JSON malformado detectado. Tentando reparar...", rawJson);
+        parsed = JSON.parse(rawJson);
+      } catch {
         const repaired = jsonrepair(rawJson);
-        return JSON.parse(repaired);
+        parsed = JSON.parse(repaired);
       }
-    } catch (error) {
-      console.error("Erro IA:", error);
+
       return {
-        evaluation: { score: 0, praise: "Ops! O sinal caiu." },
-        deep_correction: "Tive um problema técnico. Tente novamente em instantes.",
-        spoken_response: "Sorry, can you repeat?"
+        evaluation: { score: parsed.evaluation?.score ?? 70, praise: parsed.evaluation?.praise || "Bom esforço!" },
+        deep_correction: parsed.deep_correction || "Frase perfeita! Continue assim.",
+        spoken_response: parsed.spoken_response || "Could you repeat that, please?"
+      };
+    } catch (error) {
+      console.error("❌ Erro IA:", error);
+      return {
+        evaluation: { score: 0, praise: "Ops! Sinal caiu." },
+        deep_correction: "Problema técnico.", spoken_response: "Sorry, can you repeat?"
       };
     }
   }
 
-  /**
-   * 3. Geração de áudio bilíngue com silêncio entre idiomas e cache
-   */
+  // ==========================================
+  // 3. AVALIAÇÃO DE NÍVEL
+  // ==========================================
+  static async evaluateLevel(userText, language, step) {
+    const systemPrompt = `
+      Você é um avaliador rigoroso. Aluno de ${language}, passo ${step}/5.
+      RETORNE JSON: { "level": "CEFR", "score": 0-20, "nextQuestion": "Próxima ou FIM" }
+    `;
+    try {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `Resposta: "${userText}"` }],
+        temperature: 0.1, response_format: { type: "json_object" }
+      });
+      return JSON.parse(completion.choices[0].message.content);
+    } catch {
+      return { level: "A1", score: 10, nextQuestion: "FIM" };
+    }
+  }
+
+  // ==========================================
+  // 4. GERAÇÃO DE ÁUDIO POLIGLOTA (Sotaque Dinâmico)
+  // ==========================================
   static async generateBilingualVoice(targetText, language, ptText) {
     try {
-      const langCodes = {
-        english: 'en-US',
-        spanish: 'es-MX',
-        french: 'fr-FR',
-        portuguese: 'pt-BR'
-      };
-      const targetCode = langCodes[language] || 'pt-BR';
+      const langCodes = { english: 'en', spanish: 'es', french: 'fr', portuguese: 'pt' };
+      const targetLang = langCodes[language] || 'en';
+      const ptLang = 'pt'; 
+      
       let audioBuffers = [];
 
       const getAudioWithCache = async (text, lang) => {
-        const cacheKey = `${lang}:${text}`;
+        const cleanText = text.trim();
+        if (!cleanText || cleanText.length === 0) return Buffer.alloc(0);
+        
+        const cacheKey = `${lang}:${cleanText}`;
         let cached = ttsCache.get(cacheKey);
-        if (cached) return cached;
+        if (cached && cached.length > 0) return cached;
 
-        const chunks = await googleTTS.getAllAudioBase64(text, {
-          lang,
-          slow: false,
-          host: 'https://translate.google.com'
-        });
-        const buffers = chunks.map(c => Buffer.from(c.base64, 'base64'));
-        const fullBuffer = Buffer.concat(buffers);
-        ttsCache.set(cacheKey, fullBuffer);
-        return fullBuffer;
+        try {
+          const results = await getAllAudioBase64(cleanText, {
+            lang, slow: false, host: 'https://translate.google.com', splitPunct: ',.?'
+          });
+          if (!results || results.length === 0) throw new Error('Dados vazios');
+          const audioBuffer = Buffer.concat(results.map((res) => Buffer.from(res.base64, 'base64')));
+          ttsCache.set(cacheKey, audioBuffer);
+          return audioBuffer;
+        } catch (error) {
+          console.error(`❌ Erro TTS para "${cleanText}":`, error.message);
+          return Buffer.alloc(0);
+        }
       };
 
-      // Áudio no idioma alvo
+      // 1. Áudio da Conversa (Sempre no sotaque alvo)
       if (targetText) {
-        audioBuffers.push(await getAudioWithCache(targetText, targetCode));
+        const targetAudio = await getAudioWithCache(targetText, targetLang);
+        if (targetAudio.length > 0) audioBuffers.push(targetAudio);
       }
 
-      // Silêncio de 250ms (16kHz, 16-bit)
-      const silence = Buffer.alloc(16000 * 2 * 0.25);
-      audioBuffers.push(silence);
-
-      // Áudio do feedback em PT-BR
+      // 2. Áudio da Correção (Motor Poliglota)
       if (ptText) {
-        audioBuffers.push(await getAudioWithCache(ptText, 'pt-BR'));
+        // Fatiamos a frase onde houver asterisco (*)
+        const parts = ptText.split('*');
+        
+        for (let i = 0; i < parts.length; i++) {
+          const textChunk = parts[i];
+          if (textChunk.trim().length === 0) continue;
+
+          // Se o índice for ímpar, significa que a palavra estava DENTRO dos asteriscos
+          if (i % 2 !== 0) {
+            console.log(`✨ Troca de Sotaque (Nativo): "${textChunk}"`);
+            const chunkAudio = await getAudioWithCache(textChunk, targetLang);
+            if (chunkAudio.length > 0) audioBuffers.push(chunkAudio);
+          } else {
+            // Se for par, é o português normal fora dos asteriscos
+            console.log(`🗣️ Falando Português: "${textChunk}"`);
+            const chunkAudio = await getAudioWithCache(textChunk, ptLang);
+            if (chunkAudio.length > 0) audioBuffers.push(chunkAudio);
+          }
+        }
       }
 
       return audioBuffers.length > 0 ? Buffer.concat(audioBuffers) : null;
     } catch (error) {
-      console.error("Erro TTS:", error);
+      console.error("❌ Erro crítico TTS:", error);
       return null;
     }
   }

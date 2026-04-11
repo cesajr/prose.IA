@@ -1,0 +1,112 @@
+{
+  "rp_airport": {
+    "title": "✈️ Imigração no Aeroporto",
+    "description": "Você está chegando nos EUA. O oficial de imigração fará perguntas sobre sua viagem.",
+    "steps": [
+      "Passaporte e visto",
+      "Motivo da visita",
+      "Tempo de estadia",
+      "Onde vai se hospedar"
+    ],
+    "prompt_extra": "Você é um oficial de imigração americano sério mas educado. Faça perguntas curtas e claras."
+  },
+  "rp_cafe": {
+    "title": "☕ Café",
+    "description": "Peça um café e um lanche, interaja com o atendente.",
+    "steps": [
+      "Cumprimentar",
+      "Fazer o pedido",
+      "Perguntar o preço",
+      "Pagar e agradecer"
+    ],
+    "prompt_extra": "Você é um barista simpático de uma cafeteria movimentada."
+  },
+  "rp_job": {
+    "title": "💼 Entrevista de Emprego",
+    "description": "Entrevista para uma vaga de assistente administrativo.",
+    "steps": [
+      "Apresentação pessoal",
+      "Experiência anterior",
+      "Pontos fortes e fracos",
+      "Por que quer trabalhar aqui"
+    ],
+    "prompt_extra": "Você é um recrutador profissional, faz perguntas típicas de entrevista."
+  },
+  "rp_school": {
+    "title": "🏫 Escola",
+    "description": "Conversa com o professor sobre o progresso do aluno.",
+    "steps": [
+      "Notas e comportamento",
+      "Dificuldades na matéria",
+      "Sugestões de melhoria",
+      "Próximos passos"
+    ],
+    "prompt_extra": "Você é um professor dedicado, preocupado com o aprendizado do aluno."
+  },
+  "rp_university": {
+    "title": "🎓 Universidade",
+    "description": "Conversa com um colega veterano sobre a vida universitária.",
+    "steps": [
+      "Apresentação e curso",
+      "Dicas de estudo",
+      "Atividades extracurriculares",
+      "Moradia e alimentação"
+    ],
+    "prompt_extra": "Você é um aluno veterano amigável que adora ajudar calouros."
+  },
+  "rp_cinema": {
+    "title": "🎬 Cinema",
+    "description": "Comprar ingressos e pipoca no cinema.",
+    "steps": [
+      "Escolher o filme e horário",
+      "Tipo de ingresso (meia ou inteira)",
+      "Comprar pipoca e bebida",
+      "Perguntar sobre a sala"
+    ],
+    "prompt_extra": "Você é um atendente de cinema eficiente e sorridente."
+  },
+  "rp_park": {
+    "title": "🌳 Parque",
+    "description": "Passeio no parque e conversa casual com alguém que está passeando com cachorro.",
+    "steps": [
+      "Cumprimentar e elogiar o cachorro",
+      "Perguntar sobre raça e nome",
+      "Conversar sobre o clima",
+      "Despedir-se educadamente"
+    ],
+    "prompt_extra": "Você é uma pessoa simpática passeando com seu golden retriever."
+  },
+  "rp_travel": {
+    "title": "🏨 Viagem/Hotel",
+    "description": "Check-in no hotel e pedir informações turísticas.",
+    "steps": [
+      "Fazer check-in",
+      "Perguntar sobre café da manhã e wi-fi",
+      "Solicitar mapa da cidade",
+      "Pedir recomendação de restaurante"
+    ],
+    "prompt_extra": "Você é um recepcionista de hotel prestativo e cortês."
+  },
+  "rp_church": {
+    "title": "⛪ Igreja/Comunidade",
+    "description": "Conversa após o culto com um membro da comunidade.",
+    "steps": [
+      "Cumprimentar após a cerimônia",
+      "Comentar sobre a mensagem",
+      "Perguntar sobre eventos da comunidade",
+      "Despedir-se"
+    ],
+    "prompt_extra": "Você é um membro acolhedor da igreja, interessado em conhecer visitantes."
+  },
+  "rp_meeting": {
+    "title": "👔 Reunião Empresa",
+    "description": "Reunião de equipe para discutir metas trimestrais.",
+    "steps": [
+      "Apresentar resultados anteriores",
+      "Discutir desafios",
+      "Propor novas metas",
+      "Definir próximos passos"
+    ],
+    "prompt_extra": "Você é um gerente de projeto focado em resultados, mas encorajador."
+  }
+}

@@ -12,12 +12,18 @@ model User {
   name               String
   targetLanguage     String   @default("english")
   cefrLevel          String   @default("A1")
-  activeRoleplay     String?  // Ex: "rp_airport" ou null
+  activeRoleplay     String?
   activeRoleplayStep Int      @default(0)
+
+  levelTestStep      Int      @default(0)   // 0 = não está em teste, 1..N = pergunta atual
+  levelTestScore     Int      @default(0)   // pontuação acumulada durante o teste
+  levelTestHistory   Json? 
+
   createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 
   interactions Interaction[]
+  
 }
 
 model Interaction {
@@ -25,7 +31,7 @@ model Interaction {
   user        User     @relation(fields: [userId], references: [id])
   userId      BigInt
   userMessage String
-  botResponse Json     // Armazena o JSON completo da resposta da IA
+  botResponse Json
   score       Int
   createdAt   DateTime @default(now())
 }
