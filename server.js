@@ -57,6 +57,7 @@ async function processTelegramMessage(message, userData) {
   const chatId = message.chat.id;
 
   try {
+    // Avisa que o bot está "gravando áudio"
     await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: 'record_voice' });
 
     let userText = '';
@@ -91,18 +92,21 @@ async function processTelegramMessage(message, userData) {
       parse_mode: 'Markdown'
     });
 
-    // TTS e Envio de Voz (Opcional, se sua conta Groq/OpenAI suportar)
+    // TTS e Envio de Voz (Agora com Google TTS 100% Gratuito)
     try {
-        const aiAudioBuffer = await AIService.textToSpeech(aiResponseText);
+        // ATENÇÃO AQUI: Passando userData.targetLanguage para definir o sotaque
+        const aiAudioBuffer = await AIService.textToSpeech(aiResponseText, userData.targetLanguage);
+        
         const form = new FormData();
         form.append('chat_id', chatId);
-        form.append('voice', aiAudioBuffer, { filename: 'tutor_response.ogg', contentType: 'audio/ogg' });
+        // O Google TTS gera MP3, então usamos 'sendAudio' e 'audio/mpeg'
+        form.append('audio', aiAudioBuffer, { filename: 'tutor_response.mp3', contentType: 'audio/mpeg' });
 
-        await axios.post(`${TELEGRAM_API}/sendVoice`, form, {
+        await axios.post(`${TELEGRAM_API}/sendAudio`, form, {
             headers: form.getHeaders()
         });
     } catch (ttsErr) {
-        console.warn("⚠️ TTS não disponível ou falhou.");
+        console.warn("⚠️ TTS não disponível ou falhou:", ttsErr.message);
     }
 
   } catch (error) {
