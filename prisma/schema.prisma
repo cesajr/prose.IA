@@ -7,31 +7,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Tabela principal do Aluno
 model User {
-  id            String    @id @default(uuid())
-  whatsappId    String?   @unique // ID unificado da Meta (Telefone)
-  email         String?   @unique // Para o login na versão Web
-  passwordHash  String?   // Nunca armazenaremos senha em texto plano
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id               BigInt    @id // ID do Telegram (sempre único)
+  name             String?
+  targetLanguage   String    @default("english") // english, spanish, french
+  cefrLevel        String    @default("A1")      // A1, A2, B1, B2, C1, C2
+  xp               Int       @default(0)
+  streak           Int       @default(0)
+  lastActivity     DateTime  @default(now())
   
-  messages      Message[]
-
-  @@index([whatsappId]) // Indexação para busca rápida no webhook
+  // Relacionamento com erros para o SRS (Repetição Espaçada)
+  mistakes         Mistake[]
+  
+  createdAt        DateTime  @default(now())
 }
 
-model Message {
-  id        String   @id @default(uuid())
-  userId    String
-  role      String   // 'user' (Aluno) ou 'ai' (Tutor)
-  content   String   @db.Text // Permite textos longos sem truncamento
-  type      String   // 'text' ou 'audio'
-  createdAt DateTime @default(now())
-  
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Segurança de Performance (AppSec): 
-  // Sem esse índice combinado, buscar o contexto das últimas 10 mensagens 
-  // para alimentar a OpenAI causaria Full Table Scan no banco à medida que o app cresce.
-  @@index([userId, createdAt(sort: Desc)]) 
+// Tabela para mapear erros e aplicar o SRS
+model Mistake {
+  id          String   @id @default(uuid())
+  userId      BigInt
+  user        User     @relation(fields: [userId], references: [id])
+  category    String   // Ex: "pronunciation", "grammar", "vocabulary"
+  content     String   // O erro cometido (ex: "I work-i")
+  correction  String   // A forma correta
+  reviewCount Int      @default(0)
+  nextReview  DateTime @default(now())
 }
