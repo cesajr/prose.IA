@@ -5,12 +5,11 @@ import fs from 'fs';
 
 dotenv.config();
 
-// Groq cuida do Cérebro (Llama) e do Ouvido (Whisper)
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export class AIService {
   
-  // --- OUVIDO: Whisper transcreve o áudio gratuitamente ---
+  // --- OUVIDO: Whisper transcreve o áudio ---
   static async transcribeAudio(audioBuffer) {
     const tempFile = `./temp_${Date.now()}.ogg`;
     fs.writeFileSync(tempFile, audioBuffer);
@@ -26,60 +25,76 @@ export class AIService {
     }
   }
 
-  // --- CÉREBRO: Llama 3.3 gera a resposta ---
-  static async getChatResponse(userText, language, level) {
-    const prompts = {
-      english: "Você é um tutor de inglês pragmático e animado. Use o método Feedback Sanduíche (Elogio + Correção + Pergunta).",
-      spanish: "Você é um tutor de espanhol caloroso e expressivo. Usa el método Feedback Sándwich.",
-      french: "Você é um tutor de francês elegante e polido. Use o método Feedback Sanduíche."
+  // --- CÉREBRO: Metodologia prose.IA (JSON Output) ---
+  static async getChatResponse(userText, language, level, isRoleplay = false) {
+    const personas = {
+      english: "Inglês (EUA/UK): Guia pragmático, entusiasta, focado em negócios, cultura pop e eficiência.",
+      spanish: "Espanhol (ESP/MEX): Companheiro caloroso, expressivo, focado em relações sociais, comida e cultura vibrante.",
+      french: "Francês (FRA): Intelectual, polido, focado na etiqueta (politesse) e na elegância do idioma."
     };
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        {
-          role: "system",
-          content: `
-            ${prompts[language] || prompts.english}
-            - Nível do aluno: ${level}.
-            - Idioma: ${language}.
-            - Responda de forma curta (máximo 3 frases) para que o áudio não fique cansativo.
-            - Responda em ${language}, mas use Português para corrigir gramática se for nível A1/A2.
-          `
-        },
-        { role: "user", content: userText }
-      ]
-    });
+    const roleplayInstruction = isRoleplay 
+      ? "ATIVIDADE ATUAL: MODO ROLEPLAY. O usuário quer treinar uma situação real (ex: imigração, restaurante). Assuma o papel do NPC (atendente, policial, garçom). Faça perguntas diretas e espere a resposta." 
+      : "ATIVIDADE ATUAL: CONVERSA LIVRE E MICROLEARNING.";
 
-    return completion.choices[0].message.content;
+    const systemPrompt = `
+      Você é o Coordenador Pedagógico do prose.IA, um Sistema Multilíngue de Ensino Imersivo.
+      
+      PÚBLICO: Brasileiros aprendendo ${language}. Nível: ${level}.
+      PERSONA: ${personas[language] || personas.english}
+      ${roleplayInstruction}
+
+      PILARES METODOLÓGICOS:
+      1. TBLT (Task-Based Language Teaching): Foco na comunicação e resolução de problemas.
+      2. Filtro Afetivo Baixo: Seja extremamente empático. Ninguém gosta de ser julgado.
+      3. Feedback Sanduíche: Elogio + Correção + Pergunta para continuar a fluidez.
+      4. Foco em Pronúncia: O aluno usa áudio. Se ele escreveu 'worki' em vez de 'work', corrija a palatalização típica de brasileiros.
+
+      REGRA DE OURO (FORMATO DE SAÍDA):
+      Você DEVE, obrigatoriamente, responder APENAS em formato JSON válido, contendo duas chaves:
+      "correction": "O Feedback Sanduíche em texto (Use português se o nível for A1/A2, senão no idioma alvo). Deixe vazio '' se não houver erros.",
+      "spoken_response": "A resposta natural da conversa no idioma alvo. Curta, fluida, como uma mensagem de voz de WhatsApp (sem emojis, sem hashtags, pronta para ser lida por um TTS)."
+    `;
+
+    try {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userText }
+        ],
+        response_format: { type: "json_object" } // Força a saída estruturada
+      });
+
+      // Extrai o JSON gerado
+      const rawContent = completion.choices[0].message.content;
+      return JSON.parse(rawContent);
+
+    } catch (error) {
+      console.error("Erro na geração da resposta:", error);
+      return { 
+        correction: "⚠️ Tive um pequeno lapso de memória.", 
+        spoken_response: "Sorry, can you say that again?" 
+      };
+    }
   }
 
-  // --- BOCA: Google TTS (100% Gratuito e sem chave) ---
+  // --- BOCA: Google TTS (100% Gratuito) ---
   static async textToSpeech(text, language) {
+    if (!text || text.trim() === "") return null;
+
     try {
-      // Define o sotaque correto com base no idioma escolhido
-      const langCodes = {
-        english: 'en',
-        spanish: 'es',
-        french: 'fr'
-      };
+      const langCodes = { english: 'en', spanish: 'es', french: 'fr' };
       const code = langCodes[language] || 'en';
 
-      // O Google TTS tem limite de 200 caracteres por vez. 
-      // O 'getAllAudioBase64' corta o texto em partes, gera tudo e junta pra nós.
       const results = await googleTTS.getAllAudioBase64(text, {
         lang: code,
         slow: false,
         host: 'https://translate.google.com',
-        splitPunct: ',.?', // Quebra o áudio nas pontuações para soar mais natural
+        splitPunct: ',.?',
       });
 
-      // Transforma os pedaços (Base64) em um único arquivo de Áudio (Buffer) para o Telegram
-      const audioBuffer = Buffer.concat(
-        results.map((res) => Buffer.from(res.base64, 'base64'))
-      );
-
-      return audioBuffer;
+      return Buffer.concat(results.map((res) => Buffer.from(res.base64, 'base64')));
     } catch (error) {
       console.error("❌ Erro no Google TTS:", error.message);
       throw error;

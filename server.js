@@ -15,30 +15,22 @@ const app = express();
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
-// Permite que o limitador confie no túnel do Render
 app.set('trust proxy', 1);
-
-// ==========================================
-// 1. MIDDLEWARES DE SEGURANÇA E PARSER
-// ==========================================
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 150,
-  message: 'Rate limit excedido.'
-});
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 150 });
 app.use('/webhook/telegram', limiter);
 
 // ==========================================
-// 2. FUNÇÕES AUXILIARES (ONBOARDING)
+// FUNÇÕES AUXILIARES
 // ==========================================
 async function sendLanguageMenu(chatId) {
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
     chat_id: chatId,
-    text: "🎉 Bem-vindo ao prose.IA! Qual idioma você quer destravar hoje?",
+    text: "🎉 Bem-vindo ao **prose.IA**! Qual idioma você quer destravar hoje?",
+    parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
         [
@@ -51,144 +43,152 @@ async function sendLanguageMenu(chatId) {
   });
 }
 
-async function answerCallback(callbackId) {
-  await axios.post(`${TELEGRAM_API}/answerCallbackQuery`, { callback_query_id: callbackId });
+async function sendRoleplayMenu(chatId) {
+  await axios.post(`${TELEGRAM_API}/sendMessage`, {
+    chat_id: chatId,
+    text: "🎭 **Modo Roleplay Ativado!** Escolha sua missão situacional:",
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "✈️ Imigração no Aeroporto", callback_data: "rp_airport" }],
+        [{ text: "☕ Pedindo no Café", callback_data: "rp_cafe" }],
+        [{ text: "💼 Entrevista de Emprego", callback_data: "rp_job" }]
+      ]
+    }
+  });
 }
 
 // ==========================================
-// 3. ORQUESTRADOR ASSÍNCRONO (CÉREBRO)
+// ORQUESTRADOR ASSÍNCRONO (CÉREBRO UX)
 // ==========================================
-async function processTelegramMessage(message, userData) {
+async function processTelegramMessage(message, userData, isRoleplay = false) {
   const chatId = message.chat.id;
 
   try {
-    // A. Avisa que o bot está "gravando áudio" no Telegram
-    await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action: 'record_voice' });
-
     let userText = '';
+    const isVoiceMessage = !!message.voice;
 
-    // B. Roteamento: É Texto ou Áudio?
+    // Mostra "Digitando..." ou "Gravando Áudio..." dependendo de como o usuário falou
+    const action = isVoiceMessage ? 'record_voice' : 'typing';
+    await axios.post(`${TELEGRAM_API}/sendChatAction`, { chat_id: chatId, action });
+
+    // Extrai o texto (via teclado ou Whisper)
     if (message.text) {
       userText = message.text;
-    } 
-    else if (message.voice) {
+    } else if (isVoiceMessage) {
       const fileRes = await axios.get(`${TELEGRAM_API}/getFile?file_id=${message.voice.file_id}`);
       const filePath = fileRes.data.result.file_path;
-      
-      const audioRes = await axios.get(`https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`, {
-        responseType: 'arraybuffer'
-      });
+      const audioRes = await axios.get(`https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`, { responseType: 'arraybuffer' });
       
       const audioBuffer = Buffer.from(audioRes.data);
       audioBuffer.name = 'audio.ogg'; 
 
       userText = await AIService.transcribeAudio(audioBuffer);
-      console.log(`🎙️ Transcrição (${userData.targetLanguage}): "${userText}"`);
+      console.log(`🎙️ Aluno disse: "${userText}"`);
     }
 
     if (!userText) return;
 
-    // C. Cérebro: Llama 3.3 gera a resposta (Injetando idioma e nível do Supabase)
-    const aiResponseText = await AIService.getChatResponse(userText, userData.targetLanguage, userData.cefrLevel);
+    // 1. Processamento via Llama 3.3 (Retorna o JSON { correction, spoken_response })
+    const aiResponse = await AIService.getChatResponse(userText, userData.targetLanguage, userData.cefrLevel, isRoleplay);
 
-    // D. Envia a correção/resposta em TEXTO
-    await axios.post(`${TELEGRAM_API}/sendMessage`, { 
-      chat_id: chatId, 
-      text: aiResponseText,
-      parse_mode: 'Markdown'
-    });
+    // 2. UX FLUIDA: Envio da Correção Pedagógica (Somente Texto)
+    if (aiResponse.correction && aiResponse.correction.trim() !== "") {
+      await axios.post(`${TELEGRAM_API}/sendMessage`, { 
+        chat_id: chatId, 
+        text: `💡 *Feedback:* ${aiResponse.correction}`,
+        parse_mode: 'Markdown'
+      });
+    }
 
-    // E. TTS: Gera o áudio da IA e envia (Google TTS em MP3)
-    try {
-        const aiAudioBuffer = await AIService.textToSpeech(aiResponseText, userData.targetLanguage);
-        
-        const form = new FormData();
-        form.append('chat_id', chatId);
-        
-        // AQUI ESTÁ O AJUSTE CIRÚRGICO: enviando como 'audio' e .mp3
-        form.append('audio', aiAudioBuffer, { filename: 'tutor_response.mp3', contentType: 'audio/mpeg' });
-
-        // Endpoint sendAudio em vez de sendVoice
-        await axios.post(`${TELEGRAM_API}/sendAudio`, form, {
-            headers: form.getHeaders()
-        });
-    } catch (ttsErr) {
-        // Se a voz falhar, agora ele mostra o motivo real no log do Render
-        console.warn("⚠️ Erro detalhado do TTS:", ttsErr.response ? ttsErr.response.data : ttsErr.message);
+    // 3. UX FLUIDA: Envio da Conversa
+    if (isVoiceMessage && aiResponse.spoken_response) {
+      // Se o aluno mandou áudio, respondemos COM ÁUDIO
+      try {
+        const aiAudioBuffer = await AIService.textToSpeech(aiResponse.spoken_response, userData.targetLanguage);
+        if (aiAudioBuffer) {
+          const form = new FormData();
+          form.append('chat_id', chatId);
+          form.append('audio', aiAudioBuffer, { filename: 'prose_ia.mp3', contentType: 'audio/mpeg' });
+          
+          await axios.post(`${TELEGRAM_API}/sendAudio`, form, { headers: form.getHeaders() });
+        }
+      } catch (ttsErr) {
+        console.warn("⚠️ Falha no TTS, enviando texto como fallback.");
+        await axios.post(`${TELEGRAM_API}/sendMessage`, { chat_id: chatId, text: aiResponse.spoken_response });
+      }
+    } else if (aiResponse.spoken_response) {
+      // Se o aluno mandou texto, respondemos COM TEXTO
+      await axios.post(`${TELEGRAM_API}/sendMessage`, { 
+        chat_id: chatId, 
+        text: aiResponse.spoken_response 
+      });
     }
 
   } catch (error) {
-    console.error('❌ Erro no processamento:', error.message);
-    await axios.post(`${TELEGRAM_API}/sendMessage`, { 
-      chat_id: chatId, 
-      text: "Ops! Tive um problema técnico ao processar sua mensagem. Tente novamente." 
-    }).catch(() => {});
+    console.error('❌ Erro no fluxo de conversa:', error);
   }
 }
 
 // ==========================================
-// 4. ROTA DO WEBHOOK
+// ROTA DO WEBHOOK
 // ==========================================
 app.post('/webhook/telegram', async (req, res) => {
-  // Validação de Segurança
   const secretToken = req.headers['x-telegram-bot-api-secret-token'];
   if (secretToken !== process.env.TELEGRAM_SECRET_TOKEN) return res.status(403).send('Acesso Negado');
 
   const { message, callback_query } = req.body;
 
-  // A. Tratamento de Cliques nos Botões (Escolha de Idioma)
+  // A. Tratamento de Botões (Callbacks)
   if (callback_query) {
     const chatId = callback_query.message.chat.id;
-    const chosenLang = callback_query.data.replace('lang_', '');
+    const data = callback_query.data;
 
-    // Salva a escolha no banco de dados
-    await prisma.user.update({
-      where: { id: BigInt(chatId) },
-      data: { targetLanguage: chosenLang }
-    });
-
-    await answerCallback(callback_query.id);
-    await axios.post(`${TELEGRAM_API}/sendMessage`, {
-      chat_id: chatId,
-      text: `Perfeito! Definido para **${chosenLang}**. Vamos começar? Pode falar ou escrever!`,
-      parse_mode: 'Markdown'
-    });
+    // Botões de Idioma
+    if (data.startsWith('lang_')) {
+      const chosenLang = data.replace('lang_', '');
+      await prisma.user.update({ where: { id: BigInt(chatId) }, data: { targetLanguage: chosenLang } });
+      await axios.post(`${TELEGRAM_API}/sendMessage`, { chat_id: chatId, text: `Perfeito! Idioma atualizado para **${chosenLang}**.` });
+    } 
+    // Botões de Roleplay
+    else if (data.startsWith('rp_')) {
+      let user = await prisma.user.findUnique({ where: { id: BigInt(chatId) } });
+      const promptInit = `[O aluno iniciou o cenário de roleplay: ${data}. Inicie a simulação dando as boas-vindas no contexto do cenário.]`;
+      // Dispara o cérebro dizendo que é roleplay
+      processTelegramMessage({ chat: { id: chatId }, text: promptInit }, user, true);
+    }
+    
+    await axios.post(`${TELEGRAM_API}/answerCallbackQuery`, { callback_query_id: callback_query.id });
     return res.sendStatus(200);
   }
 
-  // B. Tratamento de Mensagens de Texto/Áudio
+  // B. Tratamento de Mensagens
   if (message) {
     const chatId = message.chat.id;
-
-    // MEMÓRIA: Busca ou cria usuário no Supabase
     let user = await prisma.user.findUnique({ where: { id: BigInt(chatId) } });
 
     if (!user) {
-      user = await prisma.user.create({
-        data: { id: BigInt(chatId), name: message.from.first_name || "Estudante" }
-      });
+      user = await prisma.user.create({ data: { id: BigInt(chatId), name: message.from.first_name || "Estudante" } });
       await sendLanguageMenu(chatId);
       return res.sendStatus(200);
     }
 
-    // Menu forçado caso o usuário digite /start
-    if (message.text === '/start') {
+    // Comandos de Menu
+    if (message.text === '/start' || message.text === '/idioma') {
       await sendLanguageMenu(chatId);
       return res.sendStatus(200);
     }
+    if (message.text === '/roleplay') {
+      await sendRoleplayMenu(chatId);
+      return res.sendStatus(200);
+    }
 
-    // Processa a mensagem passando os dados do banco
-    processTelegramMessage(message, user);
+    // Conversa Normal
+    processTelegramMessage(message, user, false);
   }
 
   res.sendStatus(200);
 });
 
-// Página inicial para teste de saúde (Health Check)
 app.get('/', (req, res) => res.send('🟢 prose.IA Online'));
-
-// ==========================================
-// 5. INICIALIZAÇÃO DO SERVIDOR
-// ==========================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
+app.listen(process.env.PORT || 3000, () => console.log('🚀 prose.IA na porta 3000'));
